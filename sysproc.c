@@ -8,6 +8,8 @@
 #include "proc.h"
 #include "pstat.h"
 
+extern void fillpstat(pstatTable *);
+
 int
 sys_fork(void)
 {
@@ -94,10 +96,29 @@ sys_uptime(void)
 int 
 sys_getpinfo(void)
 {
-  pstat_t *pstat;
-  if (argptr(0, (void*)&pstat, sizeof(*pstat)) < 0) {
-    return -1; // Return -1 if argptr fails
-  }
-  fillTable(pstat);
-  return 0; // Return 0 on success
+  pstatTable * pstat;
+  if (argptr(0, (void *) &pstat, sizeof(pstat)) < 0) return -1;
+  fillpstat(pstat);
+  return 0;
 }
+
+int 
+sys_settickets(void)
+{
+  int tickets;
+  if (argint(0, &tickets) < 0) return -1;
+  
+  struct proc *curproc = myproc();
+  if (tickets < 10) {
+    return -1;
+  }
+
+  
+  if (curproc == 0) {
+    return -1;
+  }
+
+  curproc->tickets = tickets;
+  return 0;
+}
+
