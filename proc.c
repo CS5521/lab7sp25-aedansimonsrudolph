@@ -20,6 +20,7 @@ extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
+extern void fillpstat(pstatTable *);
 
 void
 pinit(void)
@@ -123,6 +124,7 @@ userinit(void)
 {
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
+
 
   p = allocproc();
   
@@ -536,5 +538,48 @@ procdump(void)
         cprintf(" %p", pc[i]);
     }
     cprintf("\n");
+  }
+}
+
+void
+fillpstat(pstatTable * pstat)
+{
+ struct proc * p;
+  int i = 0;
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++, i++)
+  {
+    if (i >= NPROC)
+    {
+      break;
+    }
+
+    if (p->state == UNUSED)
+    {
+      (*pstat)[i].inuse = 0;
+    }
+    else
+    {
+      (*pstat)[i].inuse = 1;
+      (*pstat)[i].pid = p->pid;
+      (*pstat)[i].tickets = p->tickets;
+      (*pstat)[i].ticks = p->ticks;
+      safestrcpy((*pstat)[i].name, p->name, sizeof((*pstat)[i].name));
+      switch (p->state)
+      {
+        case EMBRYO: (*pstat)[i].state = 'E';
+          break;
+        case RUNNING: (*pstat)[i].state = 'R';
+          break;
+        case RUNNABLE: (*pstat)[i].state = 'A';
+          break;
+        case SLEEPING: (*pstat)[i].state = 'S';
+          break;
+        case ZOMBIE: (*pstat)[i].state = 'Z';
+          break;
+        default: (*pstat)[i].state = '?';
+          break;
+      }
+    }
   }
 }
