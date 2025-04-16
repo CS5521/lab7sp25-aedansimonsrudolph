@@ -218,7 +218,15 @@ fork(void)
   pid = np->pid;
 
   np->ticks = 0;
-  np->tickets = curproc->tickets > 10 ? curproc->tickets : 10;
+  // np->tickets = curproc->tickets > 10 ? curproc->tickets : 10;
+  if (curproc->tickets > 10)
+  {
+    np->tickets = curproc->tickets;
+  }
+  else
+  {
+    np->tickets = 10;
+  }
 
   acquire(&ptable.lock);
 

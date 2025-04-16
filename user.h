@@ -43,3 +43,4 @@ void* malloc(uint);
 void free(void*);
 int atoi(const char*);
 void ps(void);
+void settickets(int);

@@ -102,3 +102,23 @@ sys_getpinfo(void)
   return 0;
 }
 
+int 
+sys_settickets(void)
+{
+  int tickets;
+  if (argint(0, &tickets) < 0) return -1;
+  
+  struct proc *curproc = myproc();
+  if (tickets < 10) {
+    return -1;
+  }
+
+  
+  if (curproc == 0) {
+    return -1;
+  }
+
+  curproc->tickets = tickets;
+  return 0;
+}
+
