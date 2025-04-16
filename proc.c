@@ -227,9 +227,8 @@ int fork(void)
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
   pid = np->pid;
-
+s
   np->ticks = 0;
-  // np->tickets = curproc->tickets > 10 ? curproc->tickets : 10;
   if (curproc->tickets > 10)
   {
     np->tickets = curproc->tickets;
@@ -377,6 +376,7 @@ void scheduler(void)
       release(&ptable.lock);
       continue;
     }
+
     int winner = random() % total_tickets;
     int ticket_count = 0;
     struct proc *winner_proc = 0;
@@ -385,11 +385,11 @@ void scheduler(void)
       if (p->state == RUNNABLE)
       {
         ticket_count += p->tickets;
-        if (ticket_count > winner)
-        {
-          winner_proc = p;
-          break;
-        }
+      }
+      if (ticket_count >= winner)
+      {
+        winner_proc = p;
+        break;
       }
     }
     if (winner_proc)
@@ -406,254 +406,247 @@ void scheduler(void)
     release(&ptable.lock);
   }
 
-    // for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    //   if(p->state == RUNNABLE)
-    //     continue;
+  // for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+  //   if(p->state == RUNNABLE)
+  //     continue;
 
-    //   // Switch to chosen process.  It is the process's job
-    //   // to release ptable.lock and then reacquire it
-    //   // before jumping back to us.
-    //   c->proc = p;
-    //   switchuvm(p);
-    //   p->state = RUNNING;
+  //   // Switch to chosen process.  It is the process's job
+  //   // to release ptable.lock and then reacquire it
+  //   // before jumping back to us.
+  //   c->proc = p;
+  //   switchuvm(p);
+  //   p->state = RUNNING;
 
-    //   swtch(&(c->scheduler), p->context);
-    //   switchkvm();
+  //   swtch(&(c->scheduler), p->context);
+  //   switchkvm();
 
-    //   // Process is done running for now.
-    //   // It should have changed its p->state before coming back.
-    //   c->proc = 0;
-    // }
+  //   // Process is done running for now.
+  //   // It should have changed its p->state before coming back.
+  //   c->proc = 0;
+  // }
+}
+
+// Enter scheduler.  Must hold only ptable.lock
+// and have changed proc->state. Saves and restores
+// intena because intena is a property of this
+// kernel thread, not this CPU. It should
+// be proc->intena and proc->ncli, but that would
+// break in the few places where a lock is held but
+// there's no process.
+void sched(void)
+{
+  int intena;
+  struct proc *p = myproc();
+
+  if (!holding(&ptable.lock))
+    panic("sched ptable.lock");
+  if (mycpu()->ncli != 1)
+    panic("sched locks");
+  if (p->state == RUNNING)
+    panic("sched running");
+  if (readeflags() & FL_IF)
+    panic("sched interruptible");
+  intena = mycpu()->intena;
+  swtch(&p->context, mycpu()->scheduler);
+  mycpu()->intena = intena;
+}
+
+// Give up the CPU for one scheduling round.
+void yield(void)
+{
+  acquire(&ptable.lock); // DOC: yieldlock
+  myproc()->state = RUNNABLE;
+  sched();
+  release(&ptable.lock);
+}
+
+// A fork child's very first scheduling by scheduler()
+// will swtch here.  "Return" to user space.
+void forkret(void)
+{
+  static int first = 1;
+  // Still holding ptable.lock from scheduler.
+  release(&ptable.lock);
+
+  if (first)
+  {
+    // Some initialization functions must be run in the context
+    // of a regular process (e.g., they call sleep), and thus cannot
+    // be run from main().
+    first = 0;
+    iinit(ROOTDEV);
+    initlog(ROOTDEV);
   }
 
-  // Enter scheduler.  Must hold only ptable.lock
-  // and have changed proc->state. Saves and restores
-  // intena because intena is a property of this
-  // kernel thread, not this CPU. It should
-  // be proc->intena and proc->ncli, but that would
-  // break in the few places where a lock is held but
-  // there's no process.
-  void
-  sched(void)
-  {
-    int intena;
-    struct proc *p = myproc();
+  // Return to "caller", actually trapret (see allocproc).
+}
 
-    if (!holding(&ptable.lock))
-      panic("sched ptable.lock");
-    if (mycpu()->ncli != 1)
-      panic("sched locks");
-    if (p->state == RUNNING)
-      panic("sched running");
-    if (readeflags() & FL_IF)
-      panic("sched interruptible");
-    intena = mycpu()->intena;
-    swtch(&p->context, mycpu()->scheduler);
-    mycpu()->intena = intena;
+// Atomically release lock and sleep on chan.
+// Reacquires lock when awakened.
+void sleep(void *chan, struct spinlock *lk)
+{
+  struct proc *p = myproc();
+
+  if (p == 0)
+    panic("sleep");
+
+  if (lk == 0)
+    panic("sleep without lk");
+
+  // Must acquire ptable.lock in order to
+  // change p->state and then call sched.
+  // Once we hold ptable.lock, we can be
+  // guaranteed that we won't miss any wakeup
+  // (wakeup runs with ptable.lock locked),
+  // so it's okay to release lk.
+  if (lk != &ptable.lock)
+  {                        // DOC: sleeplock0
+    acquire(&ptable.lock); // DOC: sleeplock1
+    release(lk);
   }
+  // Go to sleep.
+  p->chan = chan;
+  p->state = SLEEPING;
 
-  // Give up the CPU for one scheduling round.
-  void
-  yield(void)
-  {
-    acquire(&ptable.lock); // DOC: yieldlock
-    myproc()->state = RUNNABLE;
-    sched();
+  sched();
+
+  // Tidy up.
+  p->chan = 0;
+
+  // Reacquire original lock.
+  if (lk != &ptable.lock)
+  { // DOC: sleeplock2
     release(&ptable.lock);
+    acquire(lk);
   }
+}
 
-  // A fork child's very first scheduling by scheduler()
-  // will swtch here.  "Return" to user space.
-  void
-  forkret(void)
+// PAGEBREAK!
+//  Wake up all processes sleeping on chan.
+//  The ptable lock must be held.
+static void
+wakeup1(void *chan)
+{
+  struct proc *p;
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+    if (p->state == SLEEPING && p->chan == chan)
+      p->state = RUNNABLE;
+}
+
+// Wake up all processes sleeping on chan.
+void wakeup(void *chan)
+{
+  acquire(&ptable.lock);
+  wakeup1(chan);
+  release(&ptable.lock);
+}
+
+// Kill the process with the given pid.
+// Process won't exit until it returns
+// to user space (see trap in trap.c).
+int kill(int pid)
+{
+  struct proc *p;
+
+  acquire(&ptable.lock);
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
   {
-    static int first = 1;
-    // Still holding ptable.lock from scheduler.
-    release(&ptable.lock);
-
-    if (first)
+    if (p->pid == pid)
     {
-      // Some initialization functions must be run in the context
-      // of a regular process (e.g., they call sleep), and thus cannot
-      // be run from main().
-      first = 0;
-      iinit(ROOTDEV);
-      initlog(ROOTDEV);
-    }
-
-    // Return to "caller", actually trapret (see allocproc).
-  }
-
-  // Atomically release lock and sleep on chan.
-  // Reacquires lock when awakened.
-  void
-  sleep(void *chan, struct spinlock *lk)
-  {
-    struct proc *p = myproc();
-
-    if (p == 0)
-      panic("sleep");
-
-    if (lk == 0)
-      panic("sleep without lk");
-
-    // Must acquire ptable.lock in order to
-    // change p->state and then call sched.
-    // Once we hold ptable.lock, we can be
-    // guaranteed that we won't miss any wakeup
-    // (wakeup runs with ptable.lock locked),
-    // so it's okay to release lk.
-    if (lk != &ptable.lock)
-    {                        // DOC: sleeplock0
-      acquire(&ptable.lock); // DOC: sleeplock1
-      release(lk);
-    }
-    // Go to sleep.
-    p->chan = chan;
-    p->state = SLEEPING;
-
-    sched();
-
-    // Tidy up.
-    p->chan = 0;
-
-    // Reacquire original lock.
-    if (lk != &ptable.lock)
-    { // DOC: sleeplock2
-      release(&ptable.lock);
-      acquire(lk);
-    }
-  }
-
-  // PAGEBREAK!
-  //  Wake up all processes sleeping on chan.
-  //  The ptable lock must be held.
-  static void
-  wakeup1(void *chan)
-  {
-    struct proc *p;
-
-    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-      if (p->state == SLEEPING && p->chan == chan)
-        p->state = RUNNABLE;
-  }
-
-  // Wake up all processes sleeping on chan.
-  void
-  wakeup(void *chan)
-  {
-    acquire(&ptable.lock);
-    wakeup1(chan);
-    release(&ptable.lock);
-  }
-
-  // Kill the process with the given pid.
-  // Process won't exit until it returns
-  // to user space (see trap in trap.c).
-  int kill(int pid)
-  {
-    struct proc *p;
-
-    acquire(&ptable.lock);
-    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    {
-      if (p->pid == pid)
-      {
-        p->killed = 1;
-        // Wake process from sleep if necessary.
-        if (p->state == SLEEPING)
-          p->state = RUNNABLE;
-        release(&ptable.lock);
-        return 0;
-      }
-    }
-    release(&ptable.lock);
-    return -1;
-  }
-
-  // PAGEBREAK: 36
-  //  Print a process listing to console.  For debugging.
-  //  Runs when user types ^P on console.
-  //  No lock to avoid wedging a stuck machine further.
-  void
-  procdump(void)
-  {
-    static char *states[] = {
-        [UNUSED] "unused",
-        [EMBRYO] "embryo",
-        [SLEEPING] "sleep ",
-        [RUNNABLE] "runble",
-        [RUNNING] "run   ",
-        [ZOMBIE] "zombie"};
-    int i;
-    struct proc *p;
-    char *state;
-    uint pc[10];
-
-    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    {
-      if (p->state == UNUSED)
-        continue;
-      if (p->state >= 0 && p->state < NELEM(states) && states[p->state])
-        state = states[p->state];
-      else
-        state = "???";
-      cprintf("%d %s %s", p->pid, state, p->name);
+      p->killed = 1;
+      // Wake process from sleep if necessary.
       if (p->state == SLEEPING)
-      {
-        getcallerpcs((uint *)p->context->ebp + 2, pc);
-        for (i = 0; i < 10 && pc[i] != 0; i++)
-          cprintf(" %p", pc[i]);
-      }
-      cprintf("\n");
+        p->state = RUNNABLE;
+      release(&ptable.lock);
+      return 0;
     }
   }
+  release(&ptable.lock);
+  return -1;
+}
 
-  void
-  fillpstat(pstatTable * pstat)
+// PAGEBREAK: 36
+//  Print a process listing to console.  For debugging.
+//  Runs when user types ^P on console.
+//  No lock to avoid wedging a stuck machine further.
+void procdump(void)
+{
+  static char *states[] = {
+      [UNUSED] "unused",
+      [EMBRYO] "embryo",
+      [SLEEPING] "sleep ",
+      [RUNNABLE] "runble",
+      [RUNNING] "run   ",
+      [ZOMBIE] "zombie"};
+  int i;
+  struct proc *p;
+  char *state;
+  uint pc[10];
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++)
   {
-    struct proc *p;
-    int i = 0;
-
-    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++, i++)
+    if (p->state == UNUSED)
+      continue;
+    if (p->state >= 0 && p->state < NELEM(states) && states[p->state])
+      state = states[p->state];
+    else
+      state = "???";
+    cprintf("%d %s %s", p->pid, state, p->name);
+    if (p->state == SLEEPING)
     {
-      if (i >= NPROC)
+      getcallerpcs((uint *)p->context->ebp + 2, pc);
+      for (i = 0; i < 10 && pc[i] != 0; i++)
+        cprintf(" %p", pc[i]);
+    }
+    cprintf("\n");
+  }
+}
+
+void fillpstat(pstatTable *pstat)
+{
+  struct proc *p;
+  int i = 0;
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++, i++)
+  {
+    if (i >= NPROC)
+    {
+      break;
+    }
+
+    if (p->state == UNUSED)
+    {
+      (*pstat)[i].inuse = 0;
+    }
+    else
+    {
+      (*pstat)[i].inuse = 1;
+      (*pstat)[i].pid = p->pid;
+      (*pstat)[i].tickets = p->tickets;
+      (*pstat)[i].ticks = p->ticks;
+      safestrcpy((*pstat)[i].name, p->name, sizeof((*pstat)[i].name));
+      switch (p->state)
       {
+      case EMBRYO:
+        (*pstat)[i].state = 'E';
+        break;
+      case RUNNING:
+        (*pstat)[i].state = 'R';
+        break;
+      case RUNNABLE:
+        (*pstat)[i].state = 'A';
+        break;
+      case SLEEPING:
+        (*pstat)[i].state = 'S';
+        break;
+      case ZOMBIE:
+        (*pstat)[i].state = 'Z';
+        break;
+      default:
+        (*pstat)[i].state = '?';
         break;
       }
-
-      if (p->state == UNUSED)
-      {
-        (*pstat)[i].inuse = 0;
-      }
-      else
-      {
-        (*pstat)[i].inuse = 1;
-        (*pstat)[i].pid = p->pid;
-        (*pstat)[i].tickets = p->tickets;
-        (*pstat)[i].ticks = p->ticks;
-        safestrcpy((*pstat)[i].name, p->name, sizeof((*pstat)[i].name));
-        switch (p->state)
-        {
-        case EMBRYO:
-          (*pstat)[i].state = 'E';
-          break;
-        case RUNNING:
-          (*pstat)[i].state = 'R';
-          break;
-        case RUNNABLE:
-          (*pstat)[i].state = 'A';
-          break;
-        case SLEEPING:
-          (*pstat)[i].state = 'S';
-          break;
-        case ZOMBIE:
-          (*pstat)[i].state = 'Z';
-          break;
-        default:
-          (*pstat)[i].state = '?';
-          break;
-        }
-      }
     }
   }
+}
