@@ -215,6 +215,9 @@ fork(void)
 
   pid = np->pid;
 
+  np->ticks = 0;
+  np->tickets = curproc->tickets > 10 ? curproc->tickets : 10;
+
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
