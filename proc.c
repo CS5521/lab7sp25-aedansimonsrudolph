@@ -8,6 +8,7 @@
 #include "spinlock.h"
 #include "pstat.h"
 
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -154,6 +155,26 @@ userinit(void)
   p->state = RUNNABLE;
 
   release(&ptable.lock);
+}
+
+int
+fillTable(pstatTable *pstat)
+{
+  struct proc *p;
+  int i = 0;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if (p->state == UNUSED) {
+      continue;
+    }
+    pstat[i]->pid = p->pid;
+    pstat[i]->ticks = p->ticks;
+    pstat[i]->tickets = p->tickets;
+    i++;
+  }
+  release(&ptable.lock);
+  return 0;
 }
 
 // Grow current process's memory by n bytes.
@@ -537,3 +558,46 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+void
+fillpstat(pstatTable *pstat) {
+  struct proc * p;
+  int i = 0;
+
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++, i++)
+  {
+    if (i >= NPROC)
+    {
+      break;
+    }
+
+    if (p->state == UNUSED)
+    {
+      (pstat)[i].inuse = 0;
+    }
+    else
+    {
+      (pstat)[i].inuse = 1;
+      (pstat)[i].pid = p->pid;
+      (pstat)[i].tickets = p->tickets;
+      (pstat)[i].ticks = p->ticks;
+      safestrcpy((pstat)[i].name, p->name, sizeof((pstat)[i].name));
+      switch (p->state)
+      {
+        case EMBRYO: (pstat)[i].state = 'E';
+          break;
+        case RUNNING: (pstat)[i].state = 'R';
+          break;
+        case RUNNABLE: (pstat)[i].state = 'A';
+          break;
+        case SLEEPING: (pstat)[i].state = 'S';
+          break;
+        case ZOMBIE: (pstat)[i].state = 'Z';
+          break;
+        default: (*pstat)[i].state = '?';
+          break;
+      }
+    }
+  }
+}
+

@@ -1,3 +1,6 @@
+#include "pstat.h"
+#include "types.h"
+
 struct stat;
 struct rtcdate;
 
@@ -23,7 +26,7 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
-int getpinfo(pstatTable *);
+int getpinfo(pstatTable*);
 
 // ulib.c
 int stat(const char*, struct stat*);
