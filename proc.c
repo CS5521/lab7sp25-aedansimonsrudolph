@@ -227,7 +227,7 @@ int fork(void)
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
   pid = np->pid;
-s
+
   np->ticks = 0;
   if (curproc->tickets > 10)
   {
